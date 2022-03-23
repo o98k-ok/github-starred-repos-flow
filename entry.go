@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/google/go-github/github"
 	"github.com/o98k-ok/lazy/app"
+	// "github.com/o98k-ok/lazy/v2/alfred"
 	"golang.org/x/oauth2"
 	"io/ioutil"
 	"os"
@@ -105,7 +106,8 @@ func main() {
 
 	res := app.NewItems()
 	for _, item := range js.Items {
-		if !strings.Contains(strings.ToLower(item.Title), strings.ToLower(match)) {
+		if !strings.Contains(strings.ToLower(item.Title), strings.ToLower(match)) &&
+			!strings.Contains(item.SubTitle, match) {
 			continue
 		}
 
