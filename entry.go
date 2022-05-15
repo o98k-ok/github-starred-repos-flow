@@ -13,28 +13,45 @@ import (
 )
 
 const (
-	CacheJsonFile   = "./cache.json"
-	DefaultTTL      = "8h"
-	DefaultPageSize = 20
-	TokenKey        = "GithubToken"
-	TTLKey          = "TTL"
+	CacheJsonFile = "./cache.json"
+	DefaultTTL    = "8h"
+	FullPageSize  = 20
+	IncrPageSize  = 5
+	TokenKey      = "GithubToken"
+	TTLKey        = "TTL"
 )
 
-func ListRepos(token string) (*alfred.Items, error) {
+// ListRepos from GitHub apis sorted by starred time desc
+//           cache history data, compare and update
+func ListRepos(cached *alfred.Items, token string) (*alfred.Items, error) {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
 	)
 	client := github.NewClient(oauth2.NewClient(ctx, ts))
 
-	option := github.ListOptions{
-		Page:    1,
-		PerPage: DefaultPageSize,
+	var pageSize = FullPageSize
+	cachedItems := make(map[string]*alfred.Item)
+	if cached != nil && cached.Len() != 0 {
+		pageSize = IncrPageSize
+		for _, item := range cached.Items {
+			cachedItems[item.Title] = item
+		}
 	}
 
-	res := alfred.NewItems()
+	option := github.ListOptions{
+		Page:    1,
+		PerPage: pageSize,
+	}
+
+	var finish bool
 	for {
-		repos, _, err := client.Activity.ListStarred(ctx, "", &github.ActivityListStarredOptions{ListOptions: option})
+		optns := &github.ActivityListStarredOptions{
+			Sort:        "created",
+			Direction:   "desc",
+			ListOptions: option,
+		}
+		repos, _, err := client.Activity.ListStarred(ctx, "", optns)
 		if err != nil {
 			return nil, err
 		}
@@ -44,14 +61,24 @@ func ListRepos(token string) (*alfred.Items, error) {
 			if repo.Repository.Description != nil {
 				desc = *repo.Repository.Description
 			}
-			res.Append(alfred.NewItem(*repo.Repository.FullName, desc, *repo.Repository.CloneURL))
+
+			// last starred repo has been cache, so finish call GitHub api
+			if _, finish = cachedItems[*repo.Repository.FullName]; finish {
+				break
+			}
+			cachedItems[*repo.Repository.FullName] = alfred.NewItem(*repo.Repository.FullName, desc, *repo.Repository.CloneURL)
 		}
 
-		if len(repos) < option.PerPage {
+		if len(repos) < option.PerPage || finish {
 			break
 		}
 
 		option.Page += 1
+	}
+
+	res := alfred.NewItems()
+	for _, item := range cachedItems {
+		res.Append(item)
 	}
 	return res, nil
 }
@@ -84,7 +111,7 @@ func main() {
 		defer f.Close()
 
 		gitStars := file.NewFileCache[*alfred.Items](f, duration)
-		old, err := gitStars.Load(func() (*alfred.Items, error) { return ListRepos(token) })
+		old, err := gitStars.Load(func(cached *alfred.Items, _ time.Time) (*alfred.Items, error) { return ListRepos(cached, token) })
 		if err != nil {
 			alfred.ErrItems("load github star list error", err)
 			return
